@@ -6,7 +6,7 @@
 ## Overview
 ------------
 
-This project is a Python-based script that fetches the security ban list from the National Stock Exchange of India (NSE) and sends it to a Zoho Cliq bot and channel. The script is designed to run daily, skipping holidays, and uses a GitHub Actions workflow to automate the process.
+This is a Python-based script that fetches the security ban list from the National Stock Exchange of India (NSE) and sends it to a Zoho Cliq bot and channel. The script is designed to run daily, skipping holidays, and uses a GitHub Actions workflow to automate the process.
 
 ## Requirements
 ---------------
