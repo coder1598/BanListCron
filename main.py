@@ -1,66 +1,6 @@
-import requests
-import logging
-import datetime
-import gzip
-import io
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from zohotok import get_access_token
-
-
-def setup_logger():
-    """Set up the fyers-logger to log messages to a file."""
-    logger = logging.getLogger("fyers-logger")
-    logger.setLevel(logging.DEBUG)
-
-    # Create file handler to log to a file
-    file_handler = logging.FileHandler("fyerslogger.log")
-    file_handler.setLevel(logging.DEBUG)
-
-    # Create a formatter for the log messages
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    file_handler.setFormatter(formatter)
-
-    # Add the file handler to the logger
-    logger.addHandler(file_handler)
-    return logger
-
-# Set up the logger
-logger = setup_logger()
-
-def setup_session():
-    """Create a requests session with retry logic and browser headers."""
-    session = requests.Session()
-
-    # Retry configuration
-    retry = Retry(
-        total=5,  # Total number of retries
-        backoff_factor=1,  # Time between retries will increase exponentially
-        status_forcelist=[500, 502, 503, 504],  # Retry for specific status codes
-        allowed_methods=["GET", "POST"]  # Retry only GET and POST methods
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
-    # Browser headers
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
-        "Referer": "https://www.nseindia.com/",
-        "Origin": "https://www.nseindia.com"
-    })
-    
-    return session
-
 def is_holiday_today():
     """Check if today is a holiday using the NSE API."""
-    nse_holiday_url = "https://www.nseindia.com/api/holiday-master?type=trading"  # Added type=trading parameter
+    nse_holiday_url = "https://www.nseindia.com/api/holiday-master?type=trading"
     today = datetime.date.today()
     session = setup_session()  # Use the existing session setup with headers and retry logic
 
@@ -81,21 +21,19 @@ def is_holiday_today():
         response = session.get(nse_holiday_url, timeout=10)
         response.raise_for_status()  # Raise an error for bad responses (e.g., 4xx, 5xx)
         
-        # Check if the content is compressed
+        # Log the response headers and status code for debugging
+        logger.info("Response status code: %s", response.status_code)
+        logger.info("Response headers: %s", response.headers)
+
+        # If the response is compressed, decompress it
         if 'gzip' in response.headers.get('Content-Encoding', ''):
-            # Decompress the content if it's gzip compressed
             buf = io.BytesIO(response.content)
             f = gzip.GzipFile(fileobj=buf)
             decompressed_data = f.read().decode('utf-8')  # Decode as UTF-8
         else:
             decompressed_data = response.text  # Use the text as is if not compressed
-        
-        # Log the response content
-        logger.info("Response status code: %s", response.status_code)
-        logger.info("Response headers: %s", response.headers)
-        logger.info("Response content (first 1000 chars): %s", decompressed_data[:1000])  # Log first 1000 chars of response
-        
-        # Try parsing the decompressed response as JSON
+
+        # Parse the decompressed response as JSON
         try:
             holiday_data = response.json()  # Try parsing the response as JSON
         except ValueError as e:
@@ -103,13 +41,12 @@ def is_holiday_today():
             logger.error("Raw response body: %s", decompressed_data)
             return False
 
-        # Log the entire holiday data to check the structure
+        # Log the holiday data structure for verification
         logger.info("Holiday data structure: %s", holiday_data)
 
-        # Extract holidays from the CBM list
+        # Check if 'CBM' key exists and look for today's date
         if 'CBM' in holiday_data:
             for holiday in holiday_data['CBM']:
-                # Convert the tradingDate from string to a datetime object
                 holiday_date = datetime.datetime.strptime(holiday["tradingDate"], "%d-%b-%Y").date()
                 if holiday_date == today:
                     holiday_name = holiday["description"]
@@ -122,76 +59,3 @@ def is_holiday_today():
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching NSE holiday data: %s", e)
         raise
-
-def fetch_csv_data(url):
-    """Fetch data from the given URL with error handling and retries."""
-    session = setup_session()
-
-    try:
-        response = session.get(url, timeout=10)
-        response.raise_for_status()  # Raise an HTTPError for bad responses
-        return response.content.decode("utf-8")
-    except requests.exceptions.RequestException as e:
-        logger.error("Error fetching data from URL %s: %s", url, e)
-        raise
-
-def send_cliq_message(message):
-    """Send a message to Zoho Cliq bot and channel."""
-    access_token = get_access_token()
-    if not access_token:
-        logger.error("Failed to retrieve Zoho OAuth token.")
-        return False
-
-    bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
-    channel_url = "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
-    payload = {
-        "text": f"### {message}",
-        "card": {
-            "title": "ANNOUNCEMENT",
-            "theme": "modern-inline"
-        }
-    }
-    headers = {
-        "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json"
-    }
-    try:
-        bot_response = requests.post(bot_url, headers=headers, json=payload)
-        bot_response.raise_for_status()
-        logger.info("Message sent to the bot successfully.")
-    except requests.exceptions.RequestException as e:
-        logger.error("Failed to send message to the bot: %s", e)
-        return False
-    try:
-        bot_unique_name = "watchtower"
-        channel_response = requests.post(
-            f"{channel_url}?bot_unique_name={bot_unique_name}",
-            headers=headers,
-            json=payload
-        )
-        channel_response.raise_for_status()
-        logger.info("Message sent to the channel successfully.")
-    except requests.exceptions.RequestException as e:
-        logger.error("Failed to send message to the channel: %s", e)
-        return False
-    return True
-
-def main():
-    if is_holiday_today():
-        logger.info("Skipping script execution as today is a holiday.")
-        return
-
-    csv_url = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv"
-    try:
-        data = fetch_csv_data(csv_url)
-        logger.info("Fetched data: %s", data)
-
-        if send_cliq_message(data):
-            logger.info("Message sent to Zoho Cliq successfully.")
-        else:
-            logger.error("Failed to send message to Zoho Cliq.")
-    except Exception as e:
-        logger.error("An error occurred: %s", e)
-
-if __name__ == "__main__":
-    main()
