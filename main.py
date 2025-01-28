@@ -1,9 +1,12 @@
-import requests
 import logging
 import datetime
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+import requests
+from requests.adapters import HTTPAdapter
+
 from zohotok import get_access_token
+
 
 def setup_logger():
     """Set up the fyers-logger to log messages to a file."""
@@ -24,8 +27,10 @@ def setup_logger():
     logger.addHandler(file_handler)
     return logger
 
+
 # Set up the logger
 logger = setup_logger()
+
 
 def is_holiday_today():
     """Check if today is a holiday using the Fyers API."""
@@ -35,10 +40,12 @@ def is_holiday_today():
         response = requests.get(holiday_url, timeout=10)
         response.raise_for_status()
         holiday_data = response.json()
-        
+
         # Extract and parse holiday dates
         for holiday in holiday_data:
-            holiday_date = datetime.datetime.strptime(holiday['holiday_date'], "%B %d, %Y").date()
+            holiday_date = datetime.datetime.strptime(
+                holiday['holiday_date'], "%B %d, %Y"
+            ).date()
             if holiday_date == today:
                 holiday_name = holiday['holiday_name']
                 logger.info("Today is a holiday: %s", holiday_name)
@@ -49,6 +56,7 @@ def is_holiday_today():
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching holiday data: %s", e)
         raise
+
 
 def setup_session():
     """Create a requests session with retry logic and browser headers."""
@@ -67,8 +75,11 @@ def setup_session():
 
     # Browser headers
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                  "image/webp,image/apng,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "keep-alive",
@@ -77,8 +88,9 @@ def setup_session():
         "Referer": "https://www.nseindia.com/",
         "Origin": "https://www.nseindia.com"
     })
-    
+
     return session
+
 
 def fetch_csv_data(url):
     """Fetch data from the given URL with error handling and retries."""
@@ -91,6 +103,7 @@ def fetch_csv_data(url):
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching data from URL %s: %s", url, e)
         raise
+
 
 def send_cliq_message(message):
     """Send a message to Zoho Cliq bot and channel."""
@@ -133,7 +146,9 @@ def send_cliq_message(message):
         return False
     return True
 
+
 def main():
+    """Main function to execute the script."""
     if is_holiday_today():
         logger.info("Skipping script execution as today is a holiday.")
         return
@@ -149,6 +164,7 @@ def main():
             logger.error("Failed to send message to Zoho Cliq.")
     except Exception as e:
         logger.error("An error occurred: %s", e)
+
 
 if __name__ == "__main__":
     main()
