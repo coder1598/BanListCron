@@ -57,18 +57,16 @@ def setup_session():
 
 def is_holiday_today():
     """Check if today is a holiday using the NSE API."""
-    nse_holiday_url = "https://www.nseindia.com/api/holiday-master"
+    nse_holiday_url = "https://www.nseindia.com/api/holiday-master?type=trading"
     today = datetime.date.today()
-    session = setup_session()  # Use the existing session setup with headers and retry logic
+    session = setup_session()
 
     try:
-        # Fetch holiday data from the NSE API
         response = session.get(nse_holiday_url, timeout=10)
-        response.raise_for_status()  # Raise an error for bad responses (e.g., 4xx, 5xx)
-        holiday_data = response.json()  # Parse the response as JSON
+        response.raise_for_status()  # Raise error for bad responses
+        holiday_data = response.json()  # Parse JSON response
 
-        # Extract and check holidays for today
-        for holiday in holiday_data.get("CBM", []):  # "CBM" for the relevant holiday list
+        for holiday in holiday_data.get("CBM", []):  # Check the "CBM" holiday list
             holiday_date = datetime.datetime.strptime(holiday["tradingDate"], "%d-%b-%Y").date()
             if holiday_date == today:
                 holiday_name = holiday["description"]
