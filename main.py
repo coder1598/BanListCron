@@ -78,12 +78,18 @@ def is_holiday_today():
         response = session.get(nse_holiday_url, timeout=10)
         response.raise_for_status()  # Raise an error for bad responses (e.g., 4xx, 5xx)
         
-        # Log the raw response content to debug the issue
+        # Log detailed response information
         logger.info("Response status code: %s", response.status_code)
-        logger.info("Response content: %s", response.text[:500])  # Log first 500 chars of response
-
-        # Try parsing the JSON response
-        holiday_data = response.json()  # Parse the response as JSON
+        logger.info("Response headers: %s", response.headers)
+        logger.info("Response content (first 1000 chars): %s", response.text[:1000])  # Log first 1000 chars of response
+        
+        # Check if the response is in the expected JSON format
+        try:
+            holiday_data = response.json()  # Try parsing the response as JSON
+        except ValueError as e:
+            logger.error("Error parsing JSON from response: %s", e)
+            logger.error("Raw response body: %s", response.text)
+            return False
 
         # Extract and check holidays for today
         for holiday in holiday_data.get("CBM", []):  # "CBM" for the relevant holiday list
@@ -99,10 +105,7 @@ def is_holiday_today():
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching NSE holiday data: %s", e)
         raise
-    except ValueError as e:
-        # Handle cases where the response is not valid JSON
-        logger.error("Error parsing JSON from response: %s", e)
-        return False
+
 
 def fetch_csv_data(url):
     """Fetch data from the given URL with error handling and retries."""
