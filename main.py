@@ -113,7 +113,7 @@ def send_cliq_message(message):
         return False
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
-    channel_url = "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
+    channel_url = "https://cliq.zoho.in/api/v2/channelsbyname/supportteam/message"
     payload = {
         "text": f"### {message}",
         "card": {
