@@ -27,29 +27,6 @@ def setup_logger():
 # Set up the logger
 logger = setup_logger()
 
-def is_holiday_today():
-    """Check if today is a holiday using the Fyers API."""
-    holiday_url = "https://fyers.in/holiday-data.json"
-    today = datetime.date.today()
-    try:
-        response = requests.get(holiday_url, timeout=10)
-        response.raise_for_status()
-        holiday_data = response.json()
-        
-        # Extract and parse holiday dates
-        for holiday in holiday_data:
-            holiday_date = datetime.datetime.strptime(holiday['holiday_date'], "%B %d, %Y").date()
-            if holiday_date == today:
-                holiday_name = holiday['holiday_name']
-                logger.info("Today is a holiday: %s", holiday_name)
-                print(f"Today is a holiday: {holiday_name}")
-                return True
-        print("Today is not a holiday.")
-        return False
-    except requests.exceptions.RequestException as e:
-        logger.error("Error fetching holiday data: %s", e)
-        raise
-
 def setup_session():
     """Create a requests session with retry logic and browser headers."""
     session = requests.Session()
@@ -68,17 +45,42 @@ def setup_session():
     # Browser headers
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "max-age=0",
         "Referer": "https://www.nseindia.com/",
         "Origin": "https://www.nseindia.com"
     })
     
     return session
+
+def is_holiday_today():
+    """Check if today is a holiday using the NSE API."""
+    nse_holiday_url = "https://www.nseindia.com/api/holiday-master"
+    today = datetime.date.today()
+    session = setup_session()  # Use the existing session setup with headers and retry logic
+
+    try:
+        # Fetch holiday data from the NSE API
+        response = session.get(nse_holiday_url, timeout=10)
+        response.raise_for_status()  # Raise an error for bad responses (e.g., 4xx, 5xx)
+        holiday_data = response.json()  # Parse the response as JSON
+
+        # Extract and check holidays for today
+        for holiday in holiday_data.get("CBM", []):  # "CBM" for the relevant holiday list
+            holiday_date = datetime.datetime.strptime(holiday["tradingDate"], "%d-%b-%Y").date()
+            if holiday_date == today:
+                holiday_name = holiday["description"]
+                logger.info("Today is a holiday: %s", holiday_name)
+                print(f"Today is a holiday: {holiday_name}")
+                return True
+
+        print("Today is not a holiday.")
+        return False
+    except requests.exceptions.RequestException as e:
+        logger.error("Error fetching NSE holiday data: %s", e)
+        raise
 
 def fetch_csv_data(url):
     """Fetch data from the given URL with error handling and retries."""
