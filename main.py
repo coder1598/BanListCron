@@ -1,9 +1,12 @@
 import requests
 import logging
 import datetime
+import gzip
+import io
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from zohotok import get_access_token
+
 
 def setup_logger():
     """Set up the fyers-logger to log messages to a file."""
@@ -78,34 +81,47 @@ def is_holiday_today():
         response = session.get(nse_holiday_url, timeout=10)
         response.raise_for_status()  # Raise an error for bad responses (e.g., 4xx, 5xx)
         
-        # Log detailed response information
+        # Check if the content is compressed
+        if 'gzip' in response.headers.get('Content-Encoding', ''):
+            # Decompress the content if it's gzip compressed
+            buf = io.BytesIO(response.content)
+            f = gzip.GzipFile(fileobj=buf)
+            decompressed_data = f.read().decode('utf-8')  # Decode as UTF-8
+        else:
+            decompressed_data = response.text  # Use the text as is if not compressed
+        
+        # Log the response content
         logger.info("Response status code: %s", response.status_code)
         logger.info("Response headers: %s", response.headers)
-        logger.info("Response content (first 1000 chars): %s", response.text[:1000])  # Log first 1000 chars of response
+        logger.info("Response content (first 1000 chars): %s", decompressed_data[:1000])  # Log first 1000 chars of response
         
-        # Check if the response is in the expected JSON format
+        # Try parsing the decompressed response as JSON
         try:
             holiday_data = response.json()  # Try parsing the response as JSON
         except ValueError as e:
             logger.error("Error parsing JSON from response: %s", e)
-            logger.error("Raw response body: %s", response.text)
+            logger.error("Raw response body: %s", decompressed_data)
             return False
 
-        # Extract and check holidays for today
-        for holiday in holiday_data.get("CBM", []):  # "CBM" for the relevant holiday list
-            holiday_date = datetime.datetime.strptime(holiday["tradingDate"], "%d-%b-%Y").date()
-            if holiday_date == today:
-                holiday_name = holiday["description"]
-                logger.info("Today is a holiday: %s", holiday_name)
-                print(f"Today is a holiday: {holiday_name}")
-                return True
+        # Log the entire holiday data to check the structure
+        logger.info("Holiday data structure: %s", holiday_data)
+
+        # Extract holidays from the CBM list
+        if 'CBM' in holiday_data:
+            for holiday in holiday_data['CBM']:
+                # Convert the tradingDate from string to a datetime object
+                holiday_date = datetime.datetime.strptime(holiday["tradingDate"], "%d-%b-%Y").date()
+                if holiday_date == today:
+                    holiday_name = holiday["description"]
+                    logger.info("Today is a holiday: %s", holiday_name)
+                    print(f"Today is a holiday: {holiday_name}")
+                    return True
 
         print("Today is not a holiday.")
         return False
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching NSE holiday data: %s", e)
         raise
-
 
 def fetch_csv_data(url):
     """Fetch data from the given URL with error handling and retries."""
