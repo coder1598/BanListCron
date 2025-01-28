@@ -1,4 +1,4 @@
-Here is the content of the README file with proper formatting:
+
 
 # Ban List Cron README
 ==========================
