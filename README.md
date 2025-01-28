@@ -1,6 +1,6 @@
 
 
-# Ban List Cron README
+# Ban List Cron
 ==========================
 
 ## Overview
