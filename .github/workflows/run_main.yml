@@ -3,7 +3,7 @@ name: Run main.py
 on:
   schedule:
     # Schedule the script to run every day at 9:00 AM UTC
-    # - cron: "40 2 * * 1-5"
+    - cron: "40 2 * * 1-5"
   workflow_dispatch: # Allow manual trigger of the workflow
   push:
     branches:
