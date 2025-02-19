@@ -60,4 +60,3 @@ The project uses a GitHub Actions workflow to automate the script execution. The
 
 This project is licensed under the MIT License.
 
-You can copy and paste this content into your README file, and it should maintain the proper formatting.
