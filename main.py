@@ -129,7 +129,7 @@ def send_cliq_message(message):
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
     channel_url = (
-        "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
+        "https://cliq.zoho.in/api/v2/channelsbyname/supportteam/message"
     )
     payload = {
         "text": f"### {message}",
@@ -174,7 +174,7 @@ def main():
         logger.info("Fetched data: %s", data)
 
         if send_cliq_message(data):
-            logger.info("Message sent to Zoho Cliq successfully.")
+            logger.info("Operation completed succesfully")
         else:
             logger.error("Failed to send message to Zoho Cliq.")
     except (requests.exceptions.RequestException, ValueError) as e:
