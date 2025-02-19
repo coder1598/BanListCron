@@ -1,17 +1,17 @@
+"""Module for checking holidays and send equity banlist to zoho cliq"""
+
 import logging
 import datetime
 from urllib3.util.retry import Retry
-
 import requests
 from requests.adapters import HTTPAdapter
-
 from zohotok import get_access_token
 
 
 def setup_logger():
     """Set up the fyers-logger to log messages to a file."""
-    logger = logging.getLogger("fyers-logger")
-    logger.setLevel(logging.DEBUG)
+    fyers_logger = logging.getLogger("fyers-logger")
+    fyers_logger.setLevel(logging.DEBUG)
 
     # Create file handler to log to a file
     file_handler = logging.FileHandler("fyerslogger.log")
@@ -24,8 +24,8 @@ def setup_logger():
     file_handler.setFormatter(formatter)
 
     # Add the file handler to the logger
-    logger.addHandler(file_handler)
-    return logger
+    fyers_logger.addHandler(file_handler)
+    return fyers_logger
 
 
 # Set up the logger
@@ -44,15 +44,28 @@ def is_holiday_today():
         # Extract and parse holiday dates
         for holiday in holiday_data:
             holiday_date = datetime.datetime.strptime(
-                holiday['holiday_date'], "%B %d, %Y"
+                holiday["holiday_date"], "%B %d, %Y"
             ).date()
+
             if holiday_date == today:
-                holiday_name = holiday['holiday_name']
-                logger.info("Today is a holiday: %s", holiday_name)
-                print(f"Today is a holiday: {holiday_name}")
-                return True
-        print("Today is not a holiday.")
+                # Check if equity segment is closed
+                segments_closed = holiday.get("segments_closed", [])
+                equity_closed = any(
+                    segment["segment_name"].lower() == "equity"
+                    for segment in segments_closed
+                )
+
+                if equity_closed:
+                    holiday_name = holiday["holiday_name"]
+                    logger.info("Today is a holiday (Equity closed): %s", holiday_name)
+                    return True
+
+                logger.info("Today is not a holiday for equity trading.")
+                return False
+
+        logger.info("Today is not a holiday.")
         return False
+
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching holiday data: %s", e)
         raise
@@ -67,27 +80,29 @@ def setup_session():
         total=5,  # Total number of retries
         backoff_factor=1,  # Time between retries will increase exponentially
         status_forcelist=[500, 502, 503, 504],  # Retry for specific status codes
-        allowed_methods=["GET", "POST"]  # Retry only GET and POST methods
+        allowed_methods=["GET", "POST"],  # Retry only GET and POST methods
     )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
 
     # Browser headers
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                  "image/webp,image/apng,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "max-age=0",
-        "Referer": "https://www.nseindia.com/",
-        "Origin": "https://www.nseindia.com"
-    })
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/webp,image/apng,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0",
+            "Referer": "https://www.nseindia.com/",
+            "Origin": "https://www.nseindia.com",
+        }
+    )
 
     return session
 
@@ -113,20 +128,19 @@ def send_cliq_message(message):
         return False
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
-    channel_url = "https://cliq.zoho.in/api/v2/channelsbyname/supportteam/message"
+    channel_url = (
+        "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
+    )
     payload = {
         "text": f"### {message}",
-        "card": {
-            "title": "ANNOUNCEMENT",
-            "theme": "modern-inline"
-        }
+        "card": {"title": "ANNOUNCEMENT", "theme": "modern-inline"},
     }
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     try:
-        bot_response = requests.post(bot_url, headers=headers, json=payload)
+        bot_response = requests.post(bot_url, headers=headers, json=payload, timeout=10)
         bot_response.raise_for_status()
         logger.info("Message sent to the bot successfully.")
     except requests.exceptions.RequestException as e:
@@ -137,7 +151,8 @@ def send_cliq_message(message):
         channel_response = requests.post(
             f"{channel_url}?bot_unique_name={bot_unique_name}",
             headers=headers,
-            json=payload
+            json=payload,
+            timeout=10,
         )
         channel_response.raise_for_status()
         logger.info("Message sent to the channel successfully.")
@@ -162,7 +177,7 @@ def main():
             logger.info("Message sent to Zoho Cliq successfully.")
         else:
             logger.error("Failed to send message to Zoho Cliq.")
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         logger.error("An error occurred: %s", e)
 
 
