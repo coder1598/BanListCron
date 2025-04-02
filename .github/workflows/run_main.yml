@@ -3,7 +3,7 @@ name: Run main.py
 on:
   schedule:
     # Schedule the script to run every weekday at 2:25 AM UTC
-    - cron: "25 2 * * 1-5" 
+    - cron: "10 2 * * 1-5" 
   workflow_dispatch: # Allow manual trigger of the workflow
 
 jobs:
