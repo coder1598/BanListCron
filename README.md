@@ -54,9 +54,3 @@ The project uses a GitHub Actions workflow to automate the script execution. The
 * Check the logs for any errors or issues.
 * Verify that the Zoho OAuth token is set up correctly.
 * Verify that the Zoho Cliq bot and channel are set up correctly.
-
-## License
--------
-
-This project is licensed under the MIT License.
-
