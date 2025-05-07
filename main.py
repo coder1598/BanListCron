@@ -1,4 +1,4 @@
-"""Module for checking holidays and sending equity ban list to Zoho Cliq"""
+"""Module for checking holidays and send equity banlist to zoho cliq"""
 
 import logging
 import datetime
@@ -13,18 +13,22 @@ def setup_logger():
     fyers_logger = logging.getLogger("fyers-logger")
     fyers_logger.setLevel(logging.DEBUG)
 
+    # Create file handler to log to a file
     file_handler = logging.FileHandler("fyerslogger.log")
     file_handler.setLevel(logging.DEBUG)
 
+    # Create a formatter for the log messages
     formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(message)s"
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     file_handler.setFormatter(formatter)
-    fyers_logger.addHandler(file_handler)
 
+    # Add the file handler to the logger
+    fyers_logger.addHandler(file_handler)
     return fyers_logger
 
 
+# Set up the logger
 logger = setup_logger()
 
 
@@ -32,18 +36,19 @@ def is_holiday_today():
     """Check if today is a holiday using the Fyers API."""
     holiday_url = "https://fyers.in/holiday-data.json"
     today = datetime.date.today()
-
     try:
         response = requests.get(holiday_url, timeout=10)
         response.raise_for_status()
         holiday_data = response.json()
 
+        # Extract and parse holiday dates
         for holiday in holiday_data:
             holiday_date = datetime.datetime.strptime(
                 holiday["holiday_date"], "%B %d, %Y"
             ).date()
 
             if holiday_date == today:
+                # Check if equity segment is closed
                 segments_closed = holiday.get("segments_closed", [])
                 equity_closed = any(
                     segment["segment_name"].lower() == "equity"
@@ -67,39 +72,48 @@ def is_holiday_today():
 
 
 def setup_session():
-    """Create a session with retry and browser headers for NSE requests."""
+    """Create a requests session with retry logic and browser headers."""
     session = requests.Session()
 
-    retry_strategy = Retry(
-        total=5,
-        backoff_factor=1,
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET"]
+    # Retry configuration
+    retry = Retry(
+        total=5,  # Total number of retries
+        backoff_factor=1,  # Time between retries will increase exponentially
+        status_forcelist=[500, 502, 503, 504],  # Retry for specific status codes
+        allowed_methods=["GET", "POST"],  # Retry only GET and POST methods
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
+    adapter = HTTPAdapter(max_retries=retry)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
 
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/90.0.4430.93 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Referer": "https://www.nseindia.com/",
-        "Connection": "keep-alive"
-    })
+    # Browser headers
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/webp,image/apng,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0",
+            "Referer": "https://www.nseindia.com/",
+            "Origin": "https://www.nseindia.com",
+        }
+    )
 
     return session
 
 
 def fetch_csv_data(url):
-    """Fetch CSV content from the given URL using a session with headers."""
+    """Fetch data from the given URL with error handling and retries."""
     session = setup_session()
 
     try:
         response = session.get(url, timeout=10)
-        response.raise_for_status()
+        response.raise_for_status()  # Raise an HTTPError for bad responses
         return response.content.decode("utf-8")
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching data from URL %s: %s", url, e)
@@ -114,7 +128,9 @@ def send_cliq_message(message):
         return False
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
-    channel_url = "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
+    channel_url = (
+        "https://cliq.zoho.in/api/v2/channelsbyname/supportteam/message"
+    )
     payload = {
         "text": f"### {message}",
         "card": {"title": "ANNOUNCEMENT", "theme": "modern-inline"},
@@ -123,7 +139,6 @@ def send_cliq_message(message):
         "Authorization": f"Zoho-oauthtoken {access_token}",
         "Content-Type": "application/json",
     }
-
     try:
         bot_response = requests.post(bot_url, headers=headers, json=payload, timeout=10)
         bot_response.raise_for_status()
@@ -131,10 +146,10 @@ def send_cliq_message(message):
     except requests.exceptions.RequestException as e:
         logger.error("Failed to send message to the bot: %s", e)
         return False
-
     try:
+        bot_unique_name = "watchtower"
         channel_response = requests.post(
-            f"{channel_url}?bot_unique_name=watchtower",
+            f"{channel_url}?bot_unique_name={bot_unique_name}",
             headers=headers,
             json=payload,
             timeout=10,
@@ -144,7 +159,6 @@ def send_cliq_message(message):
     except requests.exceptions.RequestException as e:
         logger.error("Failed to send message to the channel: %s", e)
         return False
-
     return True
 
 
@@ -154,17 +168,13 @@ def main():
         logger.info("Skipping script execution as today is a holiday.")
         return
 
-    today_str = datetime.date.today().strftime("%d%m%Y")
-    csv_url = f"https://nsearchives.nseindia.com/archives/fo/sec_ban/fo_secban_{today_str}.csv"
-
+    csv_url = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv"
     try:
-        raw_csv = fetch_csv_data(csv_url)
-        import pdb
-        pdb.set_trace()
-        logger.info("Fetched raw CSV content")
+        data = fetch_csv_data(csv_url)
+        logger.info("Fetched data: %s", data)
 
-        if send_cliq_message(raw_csv):
-            logger.info("Operation completed successfully.")
+        if send_cliq_message(data):
+            logger.info("Operation completed succesfully")
         else:
             logger.error("Failed to send message to Zoho Cliq.")
     except (requests.exceptions.RequestException, ValueError) as e:
