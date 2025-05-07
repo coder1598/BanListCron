@@ -68,30 +68,42 @@ def is_holiday_today():
 def download_csv_file():
     today_str = datetime.date.today().strftime("%d%m%Y")
     rel_path = f"archives/fo/sec_ban/fo_secban_{today_str}.csv"
-    session = requests.Session()
-    retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-    session.mount("https://", HTTPAdapter(max_retries=retry))
-    session.headers.update(REQ_HEADERS)
 
-    # Warm up homepage
+    session = requests.Session()
+
+    # Use the working NSE_CM_BHAV_HEADERS
+    HEADERS = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:57.0) Gecko/20100101 Firefox/57.0"
+    }
+
+    session.headers.update(HEADERS)
+
+    # Step 1: Warm-up request to set cookies
     try:
-        session.get("https://www.nseindia.com", timeout=5)
-    except Exception:
-        pass
+        home = session.get("https://www.nseindia.com", timeout=5)
+        session.cookies.update(home.cookies)  # Apply any returned cookies
+        logger.info("NSE homepage warmed up.")
+    except Exception as e:
+        logger.warning("Warm-up request failed: %s", e)
 
     for _, domain in NSE_DOMAIN_MAP.items():
         url = f"{domain}{rel_path}"
         logger.info(f"Trying to download: {url}")
         for attempt in range(MAX_RETRY_COUNT):
             try:
-                resp = session.get(url, timeout=REQUEST_TIMEOUT)
-                if resp.status_code == 200:
+                response = session.get(url, timeout=REQUEST_TIMEOUT)
+                if response.status_code == 200:
                     with open(TEMP_FILE_PATH, "wb") as f:
-                        f.write(resp.content)
+                        f.write(response.content)
                     logger.info("File downloaded successfully to %s", TEMP_FILE_PATH)
                     return TEMP_FILE_PATH
                 else:
-                    logger.warning(f"Attempt {attempt+1}: Got status code {resp.status_code}")
+                    logger.warning(f"Attempt {attempt+1}: Got status code {response.status_code}")
                     time.sleep(SLEEP_TIME)
             except Exception as e:
                 logger.warning(f"Attempt {attempt+1}: Failed to download file - {e}")
