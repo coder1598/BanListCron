@@ -7,6 +7,23 @@ import requests
 from requests.adapters import HTTPAdapter
 from zohotok import get_access_token
 
+REQ_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Priority': 'u=0, i',
+    'Pragma': 'no-cache',
+    'Cache-Control': 'no-cache',
+    'Content-Type': 'application/json'
+}
+
 def setup_logger():
     """Set up the fyers-logger to log messages to a file."""
     fyers_logger = logging.getLogger("fyers-logger")
@@ -61,7 +78,7 @@ def is_holiday_today():
         raise
 
 def setup_session():
-    """Create a session with retry and browser headers for NSE requests."""
+    """Create a session with retry and custom headers for NSE requests."""
     session = requests.Session()
 
     retry_strategy = Retry(
@@ -74,17 +91,9 @@ def setup_session():
     session.mount("https://", adapter)
     session.mount("http://", adapter)
 
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/90.0.4430.93 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Referer": "https://www.nseindia.com/",
-        "Connection": "keep-alive"
-    })
+    session.headers.update(REQ_HEADERS)
 
-    # Set homepage cookie to bypass 403 (important for some domains)
+    # Set homepage cookie to bypass 403
     try:
         session.get("https://www.nseindia.com", timeout=5)
     except Exception as e:
