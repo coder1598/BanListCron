@@ -7,7 +7,6 @@ import requests
 from requests.adapters import HTTPAdapter
 from zohotok import get_access_token
 
-
 def setup_logger():
     """Set up the fyers-logger to log messages to a file."""
     fyers_logger = logging.getLogger("fyers-logger")
@@ -16,17 +15,13 @@ def setup_logger():
     file_handler = logging.FileHandler("fyerslogger.log")
     file_handler.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(formatter)
     fyers_logger.addHandler(file_handler)
 
     return fyers_logger
 
-
 logger = setup_logger()
-
 
 def is_holiday_today():
     """Check if today is a holiday using the Fyers API."""
@@ -65,7 +60,6 @@ def is_holiday_today():
         logger.error("Error fetching holiday data: %s", e)
         raise
 
-
 def setup_session():
     """Create a session with retry and browser headers for NSE requests."""
     session = requests.Session()
@@ -90,21 +84,38 @@ def setup_session():
         "Connection": "keep-alive"
     })
 
+    # Set homepage cookie to bypass 403 (important for some domains)
+    try:
+        session.get("https://www.nseindia.com", timeout=5)
+    except Exception as e:
+        logger.warning("Could not pre-load NSE homepage: %s", e)
+
     return session
 
+NSE_DOMAIN_MAP = {
+    0: "https://archives.nseindia.com/",
+    1: "https://nsearchives.nseindia.com/",
+    2: "https://www1.nseindia.com/",
+}
 
-def fetch_csv_data(url):
-    """Fetch CSV content from the given URL using a session with headers."""
+def fetch_csv_data_with_fallback():
+    """Try multiple NSE domains to fetch the CSV."""
+    today = datetime.date.today().strftime("%d%m%Y")
+    relative_path = f"archives/fo/sec_ban/fo_secban_{today}.csv"
     session = setup_session()
 
-    try:
-        response = session.get(url, timeout=10)
-        response.raise_for_status()
-        return response.content.decode("utf-8")
-    except requests.exceptions.RequestException as e:
-        logger.error("Error fetching data from URL %s: %s", url, e)
-        raise
+    for domain in NSE_DOMAIN_MAP.values():
+        full_url = f"{domain}{relative_path}"
+        try:
+            logger.info(f"Trying URL: {full_url}")
+            response = session.get(full_url, timeout=10)
+            response.raise_for_status()
+            logger.info("Successfully fetched CSV from %s", full_url)
+            return response.text
+        except requests.exceptions.RequestException as e:
+            logger.warning("Failed to fetch from %s: %s", full_url, e)
 
+    raise Exception("All NSE domains failed to serve the CSV.")
 
 def send_cliq_message(message):
     """Send a message to Zoho Cliq bot and channel."""
@@ -147,29 +158,21 @@ def send_cliq_message(message):
 
     return True
 
-
 def main():
     """Main function to execute the script."""
     if is_holiday_today():
         logger.info("Skipping script execution as today is a holiday.")
         return
 
-    today_str = datetime.date.today().strftime("%d%m%Y")
-    csv_url = f"https://nsearchives.nseindia.com/archives/fo/sec_ban/fo_secban_{today_str}.csv"
-
     try:
-        raw_csv = fetch_csv_data(csv_url)
-        import pdb
-        pdb.set_trace()
+        raw_csv = fetch_csv_data_with_fallback()
         logger.info("Fetched raw CSV content")
-
         if send_cliq_message(raw_csv):
             logger.info("Operation completed successfully.")
         else:
             logger.error("Failed to send message to Zoho Cliq.")
-    except (requests.exceptions.RequestException, ValueError) as e:
+    except (requests.exceptions.RequestException, ValueError, Exception) as e:
         logger.error("An error occurred: %s", e)
-
 
 if __name__ == "__main__":
     main()
