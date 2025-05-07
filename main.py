@@ -1,11 +1,16 @@
-"""Module for checking holidays and sending equity ban list to Zoho Cliq"""
-
 import logging
 import datetime
-from urllib3.util.retry import Retry
+import os
+import time
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from zohotok import get_access_token
+
+TEMP_FILE_PATH = "/tmp/secban.csv"
+MAX_RETRY_COUNT = 3
+SLEEP_TIME = 3
+REQUEST_TIMEOUT = 10
 
 REQ_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0',
@@ -24,113 +29,87 @@ REQ_HEADERS = {
     'Content-Type': 'application/json'
 }
 
-def setup_logger():
-    """Set up the fyers-logger to log messages to a file."""
-    fyers_logger = logging.getLogger("fyers-logger")
-    fyers_logger.setLevel(logging.DEBUG)
-
-    file_handler = logging.FileHandler("fyerslogger.log")
-    file_handler.setLevel(logging.DEBUG)
-
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-    fyers_logger.addHandler(file_handler)
-
-    return fyers_logger
-
-logger = setup_logger()
-
-def is_holiday_today():
-    """Check if today is a holiday using the Fyers API."""
-    holiday_url = "https://fyers.in/holiday-data.json"
-    today = datetime.date.today()
-
-    try:
-        response = requests.get(holiday_url, timeout=10)
-        response.raise_for_status()
-        holiday_data = response.json()
-
-        for holiday in holiday_data:
-            holiday_date = datetime.datetime.strptime(
-                holiday["holiday_date"], "%B %d, %Y"
-            ).date()
-
-            if holiday_date == today:
-                segments_closed = holiday.get("segments_closed", [])
-                equity_closed = any(
-                    segment["segment_name"].lower() == "equity"
-                    for segment in segments_closed
-                )
-
-                if equity_closed:
-                    holiday_name = holiday["holiday_name"]
-                    logger.info("Today is a holiday (Equity closed): %s", holiday_name)
-                    return True
-
-                logger.info("Today is not a holiday for equity trading.")
-                return False
-
-        logger.info("Today is not a holiday.")
-        return False
-
-    except requests.exceptions.RequestException as e:
-        logger.error("Error fetching holiday data: %s", e)
-        raise
-
-def setup_session():
-    """Create a session with retry and custom headers for NSE requests."""
-    session = requests.Session()
-
-    retry_strategy = Retry(
-        total=5,
-        backoff_factor=1,
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
-    session.headers.update(REQ_HEADERS)
-
-    # Set homepage cookie to bypass 403
-    try:
-        session.get("https://www.nseindia.com", timeout=5)
-    except Exception as e:
-        logger.warning("Could not pre-load NSE homepage: %s", e)
-
-    return session
-
 NSE_DOMAIN_MAP = {
     0: "https://archives.nseindia.com/",
     1: "https://nsearchives.nseindia.com/",
     2: "https://www1.nseindia.com/",
 }
 
-def fetch_csv_data_with_fallback():
-    """Try multiple NSE domains to fetch the CSV."""
-    today = datetime.date.today().strftime("%d%m%Y")
-    relative_path = f"archives/fo/sec_ban/fo_secban_{today}.csv"
-    session = setup_session()
+def setup_logger():
+    logger = logging.getLogger("fyers-logger")
+    logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler("fyerslogger.log")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
 
-    for domain in NSE_DOMAIN_MAP.values():
-        full_url = f"{domain}{relative_path}"
-        try:
-            logger.info(f"Trying URL: {full_url}")
-            response = session.get(full_url, timeout=10)
-            response.raise_for_status()
-            logger.info("Successfully fetched CSV from %s", full_url)
-            return response.text
-        except requests.exceptions.RequestException as e:
-            logger.warning("Failed to fetch from %s: %s", full_url, e)
+logger = setup_logger()
 
-    raise Exception("All NSE domains failed to serve the CSV.")
+def is_holiday_today():
+    today = datetime.date.today()
+    url = "https://fyers.in/holiday-data.json"
+    try:
+        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        holidays = resp.json()
+        for h in holidays:
+            h_date = datetime.datetime.strptime(h["holiday_date"], "%B %d, %Y").date()
+            if h_date == today:
+                if any(s["segment_name"].lower() == "equity" for s in h.get("segments_closed", [])):
+                    logger.info(f"Today is a holiday: {h['holiday_name']}")
+                    return True
+        logger.info("Today is not a holiday.")
+        return False
+    except Exception as e:
+        logger.error("Error checking holiday: %s", e)
+        return False
+
+def download_csv_file():
+    today_str = datetime.date.today().strftime("%d%m%Y")
+    rel_path = f"archives/fo/sec_ban/fo_secban_{today_str}.csv"
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.headers.update(REQ_HEADERS)
+
+    # Warm up homepage
+    try:
+        session.get("https://www.nseindia.com", timeout=5)
+    except Exception:
+        pass
+
+    for _, domain in NSE_DOMAIN_MAP.items():
+        url = f"{domain}{rel_path}"
+        logger.info(f"Trying to download: {url}")
+        for attempt in range(MAX_RETRY_COUNT):
+            try:
+                resp = session.get(url, timeout=REQUEST_TIMEOUT)
+                if resp.status_code == 200:
+                    with open(TEMP_FILE_PATH, "wb") as f:
+                        f.write(resp.content)
+                    logger.info("File downloaded successfully to %s", TEMP_FILE_PATH)
+                    return TEMP_FILE_PATH
+                else:
+                    logger.warning(f"Attempt {attempt+1}: Got status code {resp.status_code}")
+                    time.sleep(SLEEP_TIME)
+            except Exception as e:
+                logger.warning(f"Attempt {attempt+1}: Failed to download file - {e}")
+                time.sleep(SLEEP_TIME)
+    raise Exception("Failed to download CSV from all fallback domains.")
+
+def parse_csv(file_path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error("Failed to read CSV file: %s", e)
+        raise
 
 def send_cliq_message(message):
-    """Send a message to Zoho Cliq bot and channel."""
     access_token = get_access_token()
     if not access_token:
-        logger.error("Failed to retrieve Zoho OAuth token.")
+        logger.error("Zoho token not available")
         return False
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
@@ -141,47 +120,32 @@ def send_cliq_message(message):
     }
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
 
     try:
-        bot_response = requests.post(bot_url, headers=headers, json=payload, timeout=10)
-        bot_response.raise_for_status()
-        logger.info("Message sent to the bot successfully.")
-    except requests.exceptions.RequestException as e:
-        logger.error("Failed to send message to the bot: %s", e)
+        requests.post(bot_url, headers=headers, json=payload, timeout=10).raise_for_status()
+        requests.post(f"{channel_url}?bot_unique_name=watchtower", headers=headers, json=payload, timeout=10).raise_for_status()
+        logger.info("Message sent successfully to Zoho Cliq.")
+        return True
+    except Exception as e:
+        logger.error("Error sending message to Cliq: %s", e)
         return False
-
-    try:
-        channel_response = requests.post(
-            f"{channel_url}?bot_unique_name=watchtower",
-            headers=headers,
-            json=payload,
-            timeout=10,
-        )
-        channel_response.raise_for_status()
-        logger.info("Message sent to the channel successfully.")
-    except requests.exceptions.RequestException as e:
-        logger.error("Failed to send message to the channel: %s", e)
-        return False
-
-    return True
 
 def main():
-    """Main function to execute the script."""
     if is_holiday_today():
-        logger.info("Skipping script execution as today is a holiday.")
+        logger.info("Skipping: Today is a holiday.")
         return
 
     try:
-        raw_csv = fetch_csv_data_with_fallback()
-        logger.info("Fetched raw CSV content")
-        if send_cliq_message(raw_csv):
-            logger.info("Operation completed successfully.")
+        file_path = download_csv_file()
+        csv_text = parse_csv(file_path)
+        if send_cliq_message(csv_text):
+            logger.info("All operations completed successfully.")
         else:
-            logger.error("Failed to send message to Zoho Cliq.")
-    except (requests.exceptions.RequestException, ValueError, Exception) as e:
-        logger.error("An error occurred: %s", e)
+            logger.error("Failed to send to Zoho Cliq.")
+    except Exception as e:
+        logger.error("Main execution error: %s", e)
 
 if __name__ == "__main__":
     main()
