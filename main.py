@@ -6,6 +6,7 @@ from urllib3.util.retry import Retry
 import requests
 from requests.adapters import HTTPAdapter
 from zohotok import get_access_token
+from nse_session import nse_session
 
 
 def setup_logger():
@@ -109,12 +110,18 @@ def setup_session():
 
 def fetch_csv_data(url):
     """Fetch data from the given URL with error handling and retries."""
-    session = setup_session()
-
     try:
-        response = session.get(url, timeout=10)
-        response.raise_for_status()  # Raise an HTTPError for bad responses
+        logger.info("Fetching data from URL: %s", url)
+        
+        # Use the NSE session manager to get data
+        response = nse_session.get_data(url)
+        
+        if not response:
+            logger.error("Failed to get response from NSE")
+            raise requests.exceptions.RequestException("Failed to get response from NSE")
+            
         return response.content.decode("utf-8")
+        
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching data from URL %s: %s", url, e)
         raise
@@ -129,7 +136,7 @@ def send_cliq_message(message):
 
     bot_url = "https://cliq.zoho.in/company/60006690132/api/v2/bots/watchtower/message"
     channel_url = (
-        "https://cliq.zoho.in/api/v2/channelsbyname/supportteam/message"
+        "https://cliq.zoho.in/api/v2/channelsbyname/csintegrationplayground/message"
     )
     payload = {
         "text": f"### {message}",
