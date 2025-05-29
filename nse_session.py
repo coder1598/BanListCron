@@ -3,6 +3,7 @@
 import time
 import random
 import logging
+import json
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -15,15 +16,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 NSE_BASE_URL = "https://www.nseindia.com"
 NSE_HOMEPAGE = "https://www.nseindia.com/"
 
-# Browser-like headers
+# Browser-like headers - more comprehensive
 NSE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive",
-    "sec-ch-ua": '"Google Chrome";v="91", "Chromium";v="91", ";Not A Brand";v="99"',
+    "sec-ch-ua": '"Not.A/Brand";v="8", "Chromium";v="123", "Google Chrome";v="123"',
     "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
     "sec-fetch-dest": "document",
     "sec-fetch-mode": "navigate",
     "sec-fetch-site": "none",
@@ -31,7 +33,13 @@ NSE_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
     "Cache-Control": "max-age=0",
     "Referer": "https://www.nseindia.com/",
+    "Origin": "https://www.nseindia.com",
+    "authority": "www.nseindia.com",
+    "pragma": "no-cache",
 }
+
+# Required NSE cookies (may need to be updated)
+NSE_REQUIRED_COOKIES = ['bm_sv', 'ak_bmsc', 'nsit', 'nseappid']
 
 class NSESession:
     """Manages session with NSE website to handle cookies and avoid 403 errors."""
@@ -41,7 +49,8 @@ class NSESession:
         self.logger = logging.getLogger("fyers-logger")
         self.session = None
         self.last_request_time = 0
-        self.min_request_interval = 1  # Minimum seconds between requests
+        self.min_request_interval = 2  # Minimum seconds between requests
+        self.max_retries = 3  # Maximum number of retries for a request
         
     def _setup_session(self):
         """Set up a new session with retry mechanism and headers."""
@@ -52,9 +61,10 @@ class NSESession:
         # Configure retry mechanism
         retry_strategy = Retry(
             total=5,
-            backoff_factor=1,
+            backoff_factor=1.5,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "POST"]
+            allowed_methods=["GET", "POST", "HEAD"],
+            respect_retry_after_header=True
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
@@ -63,32 +73,81 @@ class NSESession:
         return session
     
     def _initialize_cookies(self):
-        """Initialize cookies by visiting the NSE homepage."""
+        """Initialize cookies by visiting the NSE homepage and market data pages."""
         try:
             # Create a new session
             self.session = self._setup_session()
             
-            # Visit the homepage to get cookies
-            response = self.session.get(NSE_HOMEPAGE, timeout=10)
+            # First visit the homepage to get initial cookies
+            self.logger.info("Visiting NSE homepage to initialize cookies")
+            response = self.session.get(NSE_HOMEPAGE, timeout=15)
             response.raise_for_status()
             
-            # Add a small delay to mimic human behavior
+            self._log_cookies("After homepage visit")
+            
+            # Add a delay to mimic human behavior
+            time.sleep(2 + random.uniform(0, 1))
+            
+            # Visit the market data section to get additional cookies
+            market_data_url = f"{NSE_BASE_URL}/market-data/securities-available-for-trading"
+            self.logger.info(f"Visiting market data page: {market_data_url}")
+            response = self.session.get(market_data_url, timeout=15)
+            response.raise_for_status()
+            
+            self._log_cookies("After market data page visit")
+            
+            # Add another delay
             time.sleep(1 + random.uniform(0, 1))
             
-            if not self.session.cookies:
-                self.logger.error("Failed to get cookies from NSE homepage")
+            # Check if we have the required cookies
+            if not self._validate_cookies():
+                self.logger.warning("Not all required cookies were obtained")
                 return False
             
-            self.logger.info("Successfully initialized cookies from NSE homepage")
+            self.logger.info("Successfully initialized all required cookies")
             return True
             
         except requests.RequestException as e:
-            self.logger.error(f"Error initializing NSE session: {e}")
+            self.logger.error(f"Error initializing NSE session: {str(e)}")
             return False
-            
+    
+    def _validate_cookies(self):
+        """Check if all required cookies are present."""
+        if not self.session or not self.session.cookies:
+            return False
+        
+        cookie_dict = {cookie.name: cookie.value for cookie in self.session.cookies}
+        missing_cookies = [cookie for cookie in NSE_REQUIRED_COOKIES if cookie not in cookie_dict]
+        
+        if missing_cookies:
+            self.logger.warning(f"Missing required cookies: {missing_cookies}")
+            return False
+        
+        return True
+    
+    def _log_cookies(self, context=""):
+        """Log current cookies for debugging."""
+        if not self.session or not self.session.cookies:
+            self.logger.info(f"{context}: No cookies available")
+            return
+        
+        cookie_dict = {cookie.name: cookie.value for cookie in self.session.cookies}
+        cookie_names = list(cookie_dict.keys())
+        self.logger.info(f"{context}: Cookies present: {cookie_names}")
+    
+    def _log_response_headers(self, response, context=""):
+        """Log response headers for debugging."""
+        if not response:
+            return
+        
+        self.logger.info(f"{context} Response Headers:")
+        for header, value in response.headers.items():
+            self.logger.info(f"  {header}: {value}")
+    
     def get_session(self):
         """Get an active session with valid cookies."""
-        if not self.session or not self.session.cookies:
+        if not self.session or not self.session.cookies or not self._validate_cookies():
+            self.logger.info("Session invalid or missing cookies, initializing new session")
             if not self._initialize_cookies():
                 self.logger.error("Failed to initialize NSE session")
                 return None
@@ -102,38 +161,63 @@ class NSESession:
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < self.min_request_interval:
             sleep_time = self.min_request_interval - time_since_last_request
+            self.logger.info(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds")
             time.sleep(sleep_time)
         
-        # Get a session
-        session = self.get_session()
-        if not session:
-            return None
+        # Add referer specific to the URL being requested
+        original_referer = NSE_HEADERS["Referer"]
+        headers_update = {
+            "Referer": NSE_BASE_URL,
+        }
         
-        try:
-            # Make the request
-            response = session.get(url, params=params, timeout=10)
-            self.last_request_time = time.time()
+        retry_count = 0
+        while retry_count < self.max_retries:
+            # Get a session
+            session = self.get_session()
+            if not session:
+                return None
             
-            # Check if we're getting blocked or need to refresh cookies
-            if response.status_code in [403, 401]:
-                self.logger.warning(f"Got status code {response.status_code}, refreshing session")
-                self.session = None
-                time.sleep(2)  # Wait a bit before trying again
-                
-                # Try once more with a fresh session
-                session = self.get_session()
-                if not session:
-                    return None
-                    
-                response = session.get(url, params=params, timeout=10)
+            # Update headers for this specific request
+            session.headers.update(headers_update)
+            
+            try:
+                # Make the request
+                self.logger.info(f"Making request to: {url}")
+                response = session.get(url, params=params, timeout=15)
                 self.last_request_time = time.time()
-            
-            response.raise_for_status()
-            return response
-            
-        except requests.RequestException as e:
-            self.logger.error(f"Error fetching data from {url}: {e}")
-            return None
+                
+                # If successful, return the response
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully fetched data from {url}")
+                    return response
+                
+                # If we get a 403 or other error, log headers and retry
+                self.logger.warning(f"Got status code {response.status_code} from {url}")
+                self._log_response_headers(response, f"Error {response.status_code}")
+                
+                # Reset session and try again
+                self.session = None
+                retry_count += 1
+                
+                if retry_count < self.max_retries:
+                    wait_time = 2 ** retry_count + random.uniform(0, 1)
+                    self.logger.info(f"Retrying ({retry_count}/{self.max_retries}) in {wait_time:.2f} seconds")
+                    time.sleep(wait_time)
+                
+            except requests.RequestException as e:
+                self.logger.error(f"Error fetching data from {url}: {str(e)}")
+                self.session = None
+                retry_count += 1
+                
+                if retry_count < self.max_retries:
+                    wait_time = 2 ** retry_count + random.uniform(0, 1)
+                    self.logger.info(f"Retrying ({retry_count}/{self.max_retries}) in {wait_time:.2f} seconds")
+                    time.sleep(wait_time)
+                else:
+                    return None
+        
+        self.logger.error(f"Failed to fetch data from {url} after {self.max_retries} retries")
+        return None
 
 # Create a global instance for use throughout the application
 nse_session = NSESession() 

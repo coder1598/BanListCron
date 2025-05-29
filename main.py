@@ -119,12 +119,34 @@ def fetch_csv_data(url):
         if not response:
             logger.error("Failed to get response from NSE")
             raise requests.exceptions.RequestException("Failed to get response from NSE")
-            
-        return response.content.decode("utf-8")
+        
+        # Log successful response info
+        logger.info("Response received with status code: %s", response.status_code)
+        logger.info("Response content type: %s", response.headers.get('Content-Type', 'unknown'))
+        logger.info("Response content length: %s bytes", len(response.content))
+        
+        # Try to decode the content
+        content = response.content.decode('utf-8')
+        
+        # Check if the content looks like valid CSV data
+        first_few_lines = '\n'.join(content.splitlines()[:5])
+        logger.info("First few lines of content: %s", first_few_lines)
+        
+        return content
         
     except requests.exceptions.RequestException as e:
         logger.error("Error fetching data from URL %s: %s", url, e)
         raise
+    except UnicodeDecodeError as e:
+        logger.error("Unicode decode error: %s. Trying with different encoding...", e)
+        try:
+            # Try alternate encoding
+            content = response.content.decode('latin-1')
+            logger.info("Successfully decoded content with latin-1 encoding")
+            return content
+        except Exception as e2:
+            logger.error("Failed to decode with alternate encoding: %s", e2)
+            raise ValueError(f"Failed to decode content: {e2}") from e
 
 
 def send_cliq_message(message):
